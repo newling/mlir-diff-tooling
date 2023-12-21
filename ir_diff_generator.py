@@ -1,16 +1,74 @@
 import difflib
 import sys
+import re
+
+
+def fillMinus(l):
+    """
+    Takes in a string (single line) which starts with -, afollowed by n space
+    characters, and then optionally followed by other characters. Replaces spaces
+    with '-'. Example:
+
+    "-  xy" becomes "---xy"
+    "-"     becomes "-"
+    "-     w-" becomes "------w-"
+    etc.
+
+    More generally, "[-][n spaces][other chars]" becomes "[n+1 -][other chars]"
+    """
+    assert l.startswith("-")
+    n = 1
+    while n < len(l) and l[n] == " ":
+        n += 1
+
+    return "-" * (n) + l[n:]
+
+
+def sameUpToSSAVals(l1, l2):
+    """
+    return True if l1 and l2 are effectively the same, except that SSA values 
+    %0, %1, etc. may differ.
+    """
+    s = r"%[A-Za-z0-9_]+"
+    return re.sub(s, "", l1) == re.sub(s, "", l2)
+
 
 def getStringDiff(str1_lines, str2_lines):
-
-    # Create a Differ object
     differ = difflib.Differ()
-
-    # Calculate the difference, do not include the lines starting with ? or -. 
     diff = list(differ.compare(str1_lines, str2_lines))
-    diff = [l for l in diff if not l.startswith('?')]
-    diff = [l for l in diff if not l.startswith('-')]
-    return ''.join(diff)
+    diff = [x for x in diff if not x.startswith("?")]
+    newDiff = []
+
+    def uninterestingChange(i, targetStart):
+        l = diff[i]
+        for k in [1, -1]:
+            j = i + k
+            if j >= 0 and j < len(diff):
+                l2 = diff[j]
+                # squeeze out all trailing spaces from l:
+                if l2.startswith(targetStart) and sameUpToSSAVals(
+                    l[1::].strip(), l2[1::].strip()
+                ):
+                    return True
+        return False
+
+    for i in range(len(diff)):
+        l = diff[i]
+        if l.startswith("-"):
+            # only print removal lines if they're interesting.
+            if not uninterestingChange(i, "+"):
+                newDiff.append(fillMinus(l))
+
+        elif l.startswith("+"):
+            # only include '+' on new lines if they're interesting.
+            if not uninterestingChange(i, "-"):
+                newDiff.append(l)
+            else:
+                newDiff.append(" " + l[1::])
+        else:
+            newDiff.append(l)
+
+    return "".join(newDiff)
 
 
 def main(input_ir_fn, after_all_fn):
@@ -19,21 +77,26 @@ def main(input_ir_fn, after_all_fn):
     after_all_fn : contains the output of running passes with --print-ir-after-all
     """
 
-    heads = []
-    bodies = [[]]
+    f0 = open(input_ir_fn)
+    heads = ["// input IR\n"]
 
-    f0  = open(input_ir_fn)
-    heads.append("// input IR\n")
+    bodies = [[]]
     for l in f0.readlines():
         bodies[-1].append(l)
 
-    f0 = open(after_all_fn)
-    for l in f0.readlines():
-        if "IR Dump" in l:
-            heads.append(l)
-            bodies.append([])
-        else:
-            bodies[-1].append(l)
+    with open(after_all_fn, "r", encoding="utf-8", errors="ignore") as f0:
+        for l in f0:
+            try:
+                if "IR Dump" in l:
+                    heads.append(l)
+                    bodies.append([])
+                else:
+                    bodies[-1].append(l)
+
+            except UnicodeDecodeError:
+                break  # Stop iterating over the lines on error
+
+    assert len(heads) == len(bodies)
 
     final = []
     final.append(heads[0])
@@ -44,7 +107,9 @@ def main(input_ir_fn, after_all_fn):
     for i in range(1, len(heads)):
         if bodies[i] != lastBody:
             final.append("\n\n")
-            final.append("// line count " + str(len(lastBody)) + " -> " + str(len(bodies[i])))
+            final.append(
+                "// line count " + str(len(lastBody)) + " -> " + str(len(bodies[i]))
+            )
             final.append("\n")
             final.append(heads[i])
             diff = getStringDiff(lastBody, bodies[i])
@@ -52,14 +117,20 @@ def main(input_ir_fn, after_all_fn):
             nChanged += 1
             lastBody = bodies[i]
 
-    print("// Number of passes that changed the IR: ", nChanged, " out of ", len(heads) - 1)
-    out = ''.join(final)
+    print(
+        "// Number of passes that changed the IR: ",
+        nChanged,
+        " out of ",
+        len(heads) - 1,
+    )
+    out = "".join(final)
     print(out)
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("""
+        print(
+            """
 Usage: 
    python3 ir_diff_generator.py input.mlir after_all.mlir
 
@@ -70,14 +141,11 @@ Where:
       is the dump from running the MLIR passes with flags:
        --mlir-print-ir-after-all 
        --mlir-print-ir-module-scope  
-       --mlir-disable-threading""")
+       --mlir-disable-threading"""
+        )
         sys.exit(1)
 
     input_ir = sys.argv[1]
     after_all = sys.argv[2]
 
     main(input_ir, after_all)
-
-
-
-
