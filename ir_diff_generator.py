@@ -128,11 +128,55 @@ def main(input_ir_fn, after_all_fn):
     nLines = 0
     nChanged = 0
     lastBody = bodies[0]
+    passNames = []
+    passNumbers = []
+
+    fuseTrailingCleanups = False
+
     for i in range(1, len(heads)):
-        if bodies[i] != lastBody:
+        name = heads[i].split("IR Dump After")[-1].strip().split()[0]
+        if i == 1:
+            passNames.append([name])
+            passNumbers.append(i)
+
+        # These are 'cleanup' passes, we're not normally interested in seeing 
+        # how they change the IR. Often a pass, in the process of doing something
+        # useful, creates a lot of 'fluff' that is then cleaned up by these passes.
+        # Rather than showing the diff with lots of fluff, and then another differ 
+        # with alot of fluff removed, we merge these fluff-removal passes into the
+        # preceding pass.
+        elif (fuseTrailingCleanups and name in [
+            "Inliner",
+            "Canonicalizer",
+            "CSE",
+            "DCE",
+            "SymbolDCE",
+            "FoldGlobals",
+            "FuseGlobals",
+            "AMDAIECleanup",
+            ]):
+            passNames[-1].append(name)
+            passNumbers[-1] += 1
+
+        else:
+            passNames.append([name])
+            passNumbers.append(i)
+
+    # Merge trailing CSE / canonicalize passes into preceding passes:
+
+    # for i in range(1, len(heads)):
+    for i_ in range(1, len(passNumbers)):
+        i = passNumbers[i_]
+        passes = passNames[i_]
+
+        changed = bodies[i] != lastBody
+        if not changed:
+            final.append("\n// IR unchanged by passes " + str(passes))
+
+        if changed:
             nChanged += 1
-            final.append("\n\n")
-            final.append(heads[i])
+            final.append("\n")
+            final.append("// IR CHANGED by passes " + str(passes) + "\n")
             final.append(
                 "// line count " + str(len(lastBody)) + " -> " + str(len(bodies[i]))
             )
@@ -148,10 +192,10 @@ def main(input_ir_fn, after_all_fn):
             nLines += len(lastBody)
 
     print(
-        "// Number of passes that changed the IR: ",
+        "// Number of passes (canonicalization merged) that changed the IR: ",
         nChanged,
         " out of ",
-        len(heads) - 1,
+        len(passNames) - 1,
     )
     out = "".join(final)
     print(out)
