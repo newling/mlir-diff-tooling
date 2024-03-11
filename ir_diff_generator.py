@@ -2,6 +2,14 @@ import difflib
 import sys
 import re
 
+# The maximum number of lines that we will process in generating the diff.
+# If the number of lines is greater than this, we will skip the diff.
+maxLines = 200000
+
+# The maximum length of a line that we will print. If a line is longer than
+# this, we will replace it with a message indicating that it was trimmed.
+maxLineLength = 1000
+
 
 def fillMinus(l):
     """
@@ -26,7 +34,7 @@ def fillMinus(l):
 
 def sameUpToSSAVals(l1, l2):
     """
-    return True if l1 and l2 are effectively the same, except that SSA values 
+    return True if l1 and l2 are effectively the same, except that SSA values
     %0, %1, etc. may differ.
     """
     s = r"%[A-Za-z0-9_]+"
@@ -86,22 +94,31 @@ def main(input_ir_fn, after_all_fn):
     for l in f0.readlines():
         bodies[-1].append(l)
 
-    
     with open(after_all_fn, "r", encoding="utf-8", errors="ignore") as f0:
 
         for l in f0:
-
             try:
                 if "IR Dump" in l:
                     heads.append(l)
                     bodies.append([])
+                elif len(l) > maxLineLength:
+                    trimmed = (
+                        l[0 : maxLineLength // 2]
+                        + "<<<line of length "
+                        + str(len(l))
+                        + " was trimmed to "
+                        + str(maxLineLength)
+                        + " characters>>>"
+                        + l[-maxLineLength // 2 :]
+                    )
+                    bodies[-1].append(trimmed)
                 else:
                     bodies[-1].append(l)
 
             except UnicodeDecodeError:
+                print("Error decoding line (unicode decode error).")
                 break  # Stop iterating over the lines on error
-    
-    
+
     assert len(heads) == len(bodies)
 
     final = []
@@ -121,12 +138,11 @@ def main(input_ir_fn, after_all_fn):
             )
             final.append("\n")
 
-            if nLines < 10000:
+            if nLines < maxLines:
                 diff = getStringDiff(lastBody, bodies[i])
                 final.extend(diff)
             else:
                 final.append("// skipping diff because line count is too high\n")
-
 
             lastBody = bodies[i]
             nLines += len(lastBody)
@@ -161,5 +177,4 @@ Where:
 
     input_ir = sys.argv[1]
     after_all = sys.argv[2]
-
     main(input_ir, after_all)
