@@ -8,7 +8,7 @@ maxLines = 200000
 
 # The maximum length of a line that we will print. If a line is longer than
 # this, we will replace it with a message indicating that it was trimmed.
-maxLineLength = 1000
+maxLineLength = 800
 
 
 def fillMinus(l):
@@ -101,19 +101,25 @@ def main(input_ir_fn, after_all_fn):
                 if "IR Dump" in l:
                     heads.append(l)
                     bodies.append([])
-                elif len(l) > maxLineLength:
-                    trimmed = (
-                        l[0 : maxLineLength // 2]
-                        + "<<<line of length "
-                        + str(len(l))
-                        + " was trimmed to "
-                        + str(maxLineLength)
-                        + " characters>>>"
-                        + l[-maxLineLength // 2 :]
-                    )
-                    bodies[-1].append(trimmed)
                 else:
-                    bodies[-1].append(l)
+                    # If the string dense<"..."> is found in l, replace it with dense<"nchars=len(...)">.
+                    if "dense<" in l:
+                        l = re.sub(
+                            r"dense<\".*\">", 'dense<"nchars=' + str(len(l)) + '">', l
+                        )
+                    if len(l) > maxLineLength:
+                        trimmed = (
+                            l[0 : maxLineLength // 2]
+                            + "<<<line of length "
+                            + str(len(l))
+                            + " was trimmed to "
+                            + str(maxLineLength)
+                            + " characters>>>"
+                            + l[-maxLineLength // 2 :]
+                        )
+                        bodies[-1].append(trimmed)
+                    else:
+                        bodies[-1].append(l)
 
             except UnicodeDecodeError:
                 print("Error decoding line (unicode decode error).")
@@ -139,13 +145,13 @@ def main(input_ir_fn, after_all_fn):
             passNames.append([name])
             passNumbers.append(i)
 
-        # These are 'cleanup' passes, we're not normally interested in seeing 
+        # These are 'cleanup' passes, we're not normally interested in seeing
         # how they change the IR. Often a pass, in the process of doing something
         # useful, creates a lot of 'fluff' that is then cleaned up by these passes.
-        # Rather than showing the diff with lots of fluff, and then another differ 
+        # Rather than showing the diff with lots of fluff, and then another differ
         # with alot of fluff removed, we merge these fluff-removal passes into the
         # preceding pass.
-        elif (fuseTrailingCleanups and name in [
+        elif fuseTrailingCleanups and name in [
             "Inliner",
             "Canonicalizer",
             "CSE",
@@ -154,7 +160,7 @@ def main(input_ir_fn, after_all_fn):
             "FoldGlobals",
             "FuseGlobals",
             "AMDAIECleanup",
-            ]):
+        ]:
             passNames[-1].append(name)
             passNumbers[-1] += 1
 
@@ -164,8 +170,8 @@ def main(input_ir_fn, after_all_fn):
 
     # Merge trailing CSE / canonicalize passes into preceding passes:
 
-    # for i in range(1, len(heads)):
     for i_ in range(1, len(passNumbers)):
+        # print("Processing pass ", passNumbers[i_], " of ", len(passNumbers) - 1)
         i = passNumbers[i_]
         passes = passNames[i_]
 
@@ -174,6 +180,7 @@ def main(input_ir_fn, after_all_fn):
             final.append("\n// IR unchanged by passes " + str(passes))
 
         if changed:
+            # print("(Changed)")
             nChanged += 1
             final.append("\n")
             final.append("// IR CHANGED by passes " + str(passes) + "\n")
