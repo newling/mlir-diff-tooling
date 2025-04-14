@@ -8,7 +8,7 @@ maxLines = 200000
 
 # The maximum length of a line that we will print. If a line is longer than
 # this, we will replace it with a message indicating that it was trimmed.
-maxLineLength = 800
+maxLineLength = 400
 
 
 def fillMinus(l):
@@ -81,7 +81,7 @@ def getStringDiff(str1_lines, str2_lines):
     return "".join(newDiff)
 
 
-def main(input_ir_fn, after_all_fn):
+def main(input_ir_fn, after_all_fn, only_global_change):
     """
     input_ir_fn  : contains the initial IR
     after_all_fn : contains the output of running passes with --print-ir-after-all
@@ -96,17 +96,17 @@ def main(input_ir_fn, after_all_fn):
 
     with open(after_all_fn, "r", encoding="utf-8", errors="ignore") as f0:
 
+        count = 0
         for l in f0:
             try:
                 if "IR Dump" in l:
+                    count = count + 1
+                    if "IR Dump Before" in l:
+                        raise Exception("Expected IR Dump After, not Before")
+
                     heads.append(l)
                     bodies.append([])
                 else:
-                    # If the string dense<"..."> is found in l, replace it with dense<"nchars=len(...)">.
-                    if "dense<" in l:
-                        l = re.sub(
-                            r"dense<\".*\">", 'dense<"nchars=' + str(len(l)) + '">', l
-                        )
                     if len(l) > maxLineLength:
                         trimmed = (
                             l[0 : maxLineLength // 2]
@@ -120,6 +120,7 @@ def main(input_ir_fn, after_all_fn):
                         bodies[-1].append(trimmed)
                     else:
                         bodies[-1].append(l)
+
 
             except UnicodeDecodeError:
                 print("Error decoding line (unicode decode error).")
@@ -171,7 +172,6 @@ def main(input_ir_fn, after_all_fn):
     # Merge trailing CSE / canonicalize passes into preceding passes:
 
     for i_ in range(1, len(passNumbers)):
-        # print("Processing pass ", passNumbers[i_], " of ", len(passNumbers) - 1)
         i = passNumbers[i_]
         passes = passNames[i_]
 
@@ -180,7 +180,6 @@ def main(input_ir_fn, after_all_fn):
             final.append("\n// IR unchanged by passes " + str(passes))
 
         if changed:
-            # print("(Changed)")
             nChanged += 1
             final.append("\n")
             final.append("// IR CHANGED by passes " + str(passes) + "\n")
@@ -189,11 +188,14 @@ def main(input_ir_fn, after_all_fn):
             )
             final.append("\n")
 
-            if nLines < maxLines:
+            if (only_global_change):
+                final.extend(bodies[i])
+            elif nLines < maxLines:
                 diff = getStringDiff(lastBody, bodies[i])
                 final.extend(diff)
             else:
                 final.append("// skipping diff because line count is too high\n")
+
 
             lastBody = bodies[i]
             nLines += len(lastBody)
@@ -209,11 +211,11 @@ def main(input_ir_fn, after_all_fn):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         print(
             """
 Usage: 
-   python3 ir_diff_generator.py input.mlir after_all.mlir
+   python3 ir_diff_generator.py input.mlir after_all.mlir only_global_change
 
 Where:
    1) input.mlir
@@ -222,10 +224,15 @@ Where:
       is the dump from running the MLIR passes with flags:
        --mlir-print-ir-after-all 
        --mlir-print-ir-module-scope  
-       --mlir-disable-threading"""
+       --mlir-disable-threading
+   3) only_global_change: if true, don't run the differ on changes"""
         )
         sys.exit(1)
 
     input_ir = sys.argv[1]
     after_all = sys.argv[2]
-    main(input_ir, after_all)
+    globby = sys.argv[3]
+    only_global_change = False
+    if (globby in ["true", "True", "TRUE", "1"]):
+        only_global_change = True
+    main(input_ir, after_all, only_global_change)
